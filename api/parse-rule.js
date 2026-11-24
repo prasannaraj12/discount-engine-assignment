@@ -1,5 +1,5 @@
 // Vercel serverless function: POST /api/parse-rule
-import { handleParseRule, createProvider } from '../server/parseRule.js'
+import { handleParseRule, createProvider, providerConfigProblem } from '../server/parseRule.js'
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') {
@@ -8,7 +8,7 @@ export default async function handler(req, res) {
   }
   const ip = String(req.headers['x-forwarded-for'] ?? '').split(',')[0].trim() || 'unknown'
   const body = typeof req.body === 'string' ? safeJson(req.body) : req.body
-  const { status, body: payload } = await handleParseRule(body, { provider: createProvider(), ip })
+  const { status, body: payload } = await handleParseRule(body, { provider: createProvider(), configProblem: providerConfigProblem(), ip })
   return res.status(status).json(payload)
 }
 

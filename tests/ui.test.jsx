@@ -144,3 +144,88 @@ describe('app workflow', () => {
     expect(screen.getByText(/You're just ₹1,501 away/)).toBeTruthy()
   })
 })
+
+describe('PDF preview decisions', () => {
+  const t = (str, x, y) => ({ str, x, y, page: 1 })
+  const header = [t('Product', 50, 700), t('Brand', 190, 700), t('Platform', 310, 700), t('Base Price', 430, 700)]
+  const row = (y, product, price) => [t(product, 50, y), t('LivSpace Pro', 190, y), t('Noon', 310, y), t(price, 430, y)]
+  const cartRows = () => {
+    const tables = within(screen.getByRole('region', { name: 'Cart' })).getAllByRole('table')
+    return within(tables[tables.length - 1]).getAllByRole('row').length - 1
+  }
+
+  beforeEach(() => {
+    render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Load sample data' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'PDF' }))
+  })
+
+  const pickPdf = () =>
+    fireEvent.change(document.querySelector('input[type=file][accept*=pdf]'), {
+      target: { files: [new File(['%PDF-1.4 x'], 'cart.pdf', { type: 'application/pdf' })] },
+    })
+
+  it('Cancel closes the preview and keeps the current cart and prices', async () => {
+    extractTextItems.mockResolvedValue([...header, ...row(680, 'Ceramic Vase', 'Rs.2,499')])
+    pickPdf()
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('button', { name: /Replace cart/ })).toBeNull()
+    expect(cartRows()).toBe(6)
+    expect(within(screen.getByRole('region', { name: 'Cart' })).getByText(/sample-data\/cart\.csv/)).toBeTruthy()
+  })
+
+  it('a non-PDF dropped on the PDF area is rejected without reading it, and the cart is kept', async () => {
+    const dropzone = screen.getByRole('button', { name: 'Upload Cart PDF' })
+    fireEvent.drop(dropzone, { dataTransfer: { files: [new File(['a,b'], 'cart.csv', { type: 'text/csv' })] } })
+    expect(await screen.findByText(/cart\.csv isn't a supported file\. Please upload a \.pdf file\./)).toBeTruthy()
+    expect(screen.getByText('Your current cart (6 items) was kept.')).toBeTruthy()
+    expect(extractTextItems).not.toHaveBeenCalled()
+    expect(cartRows()).toBe(6)
+  })
+
+  it('an empty (0-byte) PDF is rejected before extraction', async () => {
+    fireEvent.change(document.querySelector('input[type=file][accept*=pdf]'), { target: { files: [new File([], 'empty.pdf', { type: 'application/pdf' })] } })
+    expect(await screen.findByText('empty.pdf is empty.')).toBeTruthy()
+    expect(extractTextItems).not.toHaveBeenCalled()
+    expect(cartRows()).toBe(6)
+  })
+
+  it('the duplicate checkbox decides whether repeated rows are imported', async () => {
+    extractTextItems.mockResolvedValue([...header, ...row(680, 'Ceramic Vase', 'Rs.2,499'), ...row(660, 'Ceramic Vase', 'Rs.2,499')])
+    pickPdf()
+    expect(await screen.findByText('Row 2 looks like a duplicate of row 1 — kept unless you exclude duplicates')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /Replace cart with 2 items/ })).toBeTruthy()
+    fireEvent.click(screen.getByRole('checkbox', { name: /Keep possible duplicates/ }))
+    fireEvent.click(screen.getByRole('button', { name: /Replace cart with 1 item$/ }))
+    await waitFor(() => expect(cartRows()).toBe(1))
+  })
+})
+
+describe('wording checks in the review screen', () => {
+  const ruleOutput = (rule) => ({
+    ok: true,
+    result: { status: 'ok', interpretation: 'x', clarification: null, missing_fields: [], rule: { scope: 'brand', applies_to: 'Natura Casa', stackable: false, min_cart_value: null, threshold_inclusive: null, ...rule } },
+  })
+
+  it('a negative amount in the text disables Confirm', async () => {
+    requestRuleParse.mockResolvedValue(ruleOutput({ type: 'flat', value: 50 }))
+    const onConfirm = vi.fn()
+    render(<RuleBuilder rules={[]} cartItems={cartItems} onConfirm={onConfirm} />)
+    await interpret('-50 rupees off Natura Casa')
+    expect(await screen.findByText(/contains a negative amount \("-50"\)/)).toBeTruthy()
+    const confirm = screen.getByRole('button', { name: /Confirm rule/ })
+    expect(confirm.disabled).toBe(true)
+    fireEvent.click(confirm)
+    expect(onConfirm).not.toHaveBeenCalled()
+  })
+
+  it('a time limit shows a warning but the merchant can still confirm a permanent rule', async () => {
+    requestRuleParse.mockResolvedValue(ruleOutput({ type: 'percentage', value: 20 }))
+    const onConfirm = vi.fn()
+    render(<RuleBuilder rules={[]} cartItems={cartItems} onConfirm={onConfirm} />)
+    await interpret('20% off Natura Casa this weekend only')
+    expect(await screen.findByText(/mentions a time limit \("weekend"\).*apply permanently/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /Confirm rule/ }))
+    expect(onConfirm).toHaveBeenCalledTimes(1)
+  })
+})

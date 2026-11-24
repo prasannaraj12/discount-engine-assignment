@@ -8,13 +8,55 @@
  * even though structured outputs were requested — it is never trusted blindly.
  */
 import { llmRuleSchema } from './llm/ruleOutputSchema.js'
-import { createAnthropicProvider, ProviderError } from './llm/anthropicProvider.js'
+import { ProviderError } from './llm/errors.js'
+import { createAnthropicProvider, DEFAULT_ANTHROPIC_MODEL } from './llm/anthropicProvider.js'
+import { createGroqProvider, DEFAULT_GROQ_MODEL } from './llm/groqProvider.js'
 
 export const MAX_TEXT_LENGTH = 500
 
+/**
+ * Provider selection is explicit: LLM_PROVIDER=groq | anthropic.
+ * Unset means "anthropic" (the original behaviour). The app never switches
+ * provider on its own because a different key happens to exist, and never
+ * falls back to another provider when the selected one fails.
+ *
+ *   groq:      GROQ_API_KEY (required), GROQ_MODEL (default openai/gpt-oss-120b)
+ *   anthropic: ANTHROPIC_API_KEY (required), ANTHROPIC_MODEL, or legacy LLM_MODEL
+ */
+export function resolveProviderConfig(env = process.env) {
+  const name = String(env.LLM_PROVIDER ?? '').trim().toLowerCase() || 'anthropic'
+  if (name === 'groq') {
+    return {
+      name,
+      keyVar: 'GROQ_API_KEY',
+      apiKey: env.GROQ_API_KEY || null,
+      model: String(env.GROQ_MODEL ?? '').trim() || DEFAULT_GROQ_MODEL,
+    }
+  }
+  if (name === 'anthropic') {
+    return {
+      name,
+      keyVar: 'ANTHROPIC_API_KEY',
+      apiKey: env.ANTHROPIC_API_KEY || null,
+      model: String(env.ANTHROPIC_MODEL ?? '').trim() || String(env.LLM_MODEL ?? '').trim() || DEFAULT_ANTHROPIC_MODEL,
+    }
+  }
+  return { name, keyVar: null, apiKey: null, model: null, unknown: true }
+}
+
+/** Human-readable reason the parser can't run, or null. Never includes key values. */
+export function providerConfigProblem(env = process.env) {
+  const cfg = resolveProviderConfig(env)
+  if (cfg.unknown) return `LLM_PROVIDER "${cfg.name}" is not supported; use "groq" or "anthropic"`
+  if (!cfg.apiKey) return `${cfg.keyVar} is missing for LLM_PROVIDER=${cfg.name}`
+  return null
+}
+
 export function createProvider(env = process.env) {
-  if (!env.ANTHROPIC_API_KEY) return null
-  return createAnthropicProvider({ apiKey: env.ANTHROPIC_API_KEY, model: env.LLM_MODEL || undefined })
+  const cfg = resolveProviderConfig(env)
+  if (cfg.unknown || !cfg.apiKey) return null
+  if (cfg.name === 'groq') return createGroqProvider({ apiKey: cfg.apiKey, model: cfg.model })
+  return createAnthropicProvider({ apiKey: cfg.apiKey, model: cfg.model })
 }
 
 function cleanList(list) {
@@ -33,14 +75,14 @@ export function isRateLimited(ip, { limit = 20, windowMs = 60_000, now = Date.no
 
 const fail = (status, code, message) => ({ status, body: { error: code, message } })
 
-export async function handleParseRule(body, { provider, ip = 'unknown' } = {}) {
+export async function handleParseRule(body, { provider, configProblem = null, ip = 'unknown' } = {}) {
   const text = typeof body?.text === 'string' ? body.text.trim() : ''
   if (text.length < 3) return fail(400, 'empty_input', 'Please describe the discount rule.')
   if (text.length > MAX_TEXT_LENGTH) {
     return fail(400, 'input_too_long', `Please keep the description under ${MAX_TEXT_LENGTH} characters.`)
   }
   if (!provider) {
-    return fail(503, 'not_configured', 'The AI rule parser is not configured on this server (ANTHROPIC_API_KEY is missing).')
+    return fail(503, 'not_configured', `The AI rule parser is not configured on this server${configProblem ? `: ${configProblem}` : ''}.`)
   }
   if (isRateLimited(ip)) return fail(429, 'rate_limited', 'Too many requests. Please wait a minute and try again.')
 

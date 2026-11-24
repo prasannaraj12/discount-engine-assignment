@@ -10,7 +10,7 @@ function apiDevServer(env) {
     name: 'api-dev-server',
     configureServer(server) {
       server.middlewares.use('/api/parse-rule', async (req, res) => {
-        const { handleParseRule, createProvider } = await import('./server/parseRule.js')
+        const { handleParseRule, createProvider, providerConfigProblem } = await import('./server/parseRule.js')
         const send = (status, payload) => {
           res.statusCode = status
           res.setHeader('Content-Type', 'application/json')
@@ -25,7 +25,7 @@ function apiDevServer(env) {
         } catch {
           /* handled as empty input */
         }
-        const result = await handleParseRule(body, { provider: createProvider(env), ip: req.socket.remoteAddress })
+        const result = await handleParseRule(body, { provider: createProvider(env), configProblem: providerConfigProblem(env), ip: req.socket.remoteAddress })
         send(result.status, result.body)
       })
     },

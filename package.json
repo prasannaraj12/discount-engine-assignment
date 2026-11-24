@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "sample:pdfs": "node scripts/generate-sample-pdfs.mjs",
-    "eval:parser": "node scripts/eval-parser.mjs"
+    "eval:parser": "node scripts/eval-parser.mjs",
+    "parse:once": "node scripts/parse-once.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.13.0",

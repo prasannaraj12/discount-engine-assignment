@@ -160,11 +160,11 @@ function RuleReview({ initial, rules, cartItems, known, onDiscard, onConfirm }) 
   const [draft, setDraft] = useState(initial.draft)
   const [submitted, setSubmitted] = useState(false)
   const ctx = { text: initial.text, existingRules: rules, cartItems }
-  const { validation, warnings, duplicateOf } = finalizeView(draft, ctx)
+  const { validation, warnings, blockers, duplicateOf } = finalizeView(draft, ctx)
   const impact = validation.ok && cartItems.length > 0 ? previewRuleImpact(cartItems, rules, validation.rule) : null
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }))
   const num = (v) => (v === '' ? '' : Number(v))
-  const canConfirm = validation.ok && !duplicateOf && !submitted
+  const canConfirm = validation.ok && !duplicateOf && blockers.length === 0 && !submitted
 
   return (
     <div>
@@ -263,6 +263,19 @@ function RuleReview({ initial, rules, cartItems, known, onDiscard, onConfirm }) 
             <ul>
               {validation.errors.map((e) => (
                 <li key={e}>{e}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      )}
+      {blockers.length > 0 && (
+        <div className="alert alert-error" role="alert">
+          <Icon name="alert" />
+          <div>
+            <div className="alert-title">Can't add this rule</div>
+            <ul>
+              {blockers.map((b) => (
+                <li key={b}>{b}</li>
               ))}
             </ul>
           </div>

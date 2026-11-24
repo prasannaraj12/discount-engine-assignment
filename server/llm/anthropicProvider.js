@@ -10,18 +10,14 @@ import Anthropic from '@anthropic-ai/sdk'
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod'
 import { llmRuleSchema } from './ruleOutputSchema.js'
 import { SYSTEM_PROMPT, buildUserMessage } from './prompt.js'
+import { ProviderError } from './errors.js'
 
-export const DEFAULT_MODEL = 'claude-opus-5-5'
+export const DEFAULT_ANTHROPIC_MODEL = 'claude-opus-5-5'
+export const DEFAULT_MODEL = DEFAULT_ANTHROPIC_MODEL // kept for existing imports
 
-export class ProviderError extends Error {
-  constructor(code, message, httpStatus = 502) {
-    super(message)
-    this.code = code
-    this.httpStatus = httpStatus
-  }
-}
+export { ProviderError } // re-exported for existing imports
 
-export function createAnthropicProvider({ apiKey, model = DEFAULT_MODEL, timeoutMs = 25000 }) {
+export function createAnthropicProvider({ apiKey, model = DEFAULT_ANTHROPIC_MODEL, timeoutMs = 25000 }) {
   const client = new Anthropic({ apiKey, timeout: timeoutMs, maxRetries: 1 })
 
   return {

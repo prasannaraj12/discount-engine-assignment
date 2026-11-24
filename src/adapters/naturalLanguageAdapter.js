@@ -41,6 +41,51 @@ const INCLUSIVE_WORDING = /\b(at least|minimum|min\.?|or more|and above|or above
 const STRICT_WORDING = /\b(above|more than|over|exceeds?|exceeding|greater than|beyond)\b/i
 const STACK_WORDING = /\b(stack|stackable|stacks|combin\w*|on top|in addition|together with|plus other)\b/i
 
+const MONTH = '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)'
+const DAY = '(?:mon|tues|wednes|thurs|fri|satur|sun)day'
+/**
+ * Time-limit wording. The engine has no dates, so a rule parsed from this text
+ * would apply permanently. Added after the parser evaluation, where
+ * "20% off Natura Casa this weekend only" came back as a permanent rule.
+ */
+const TIME_LIMIT_WORDING = new RegExp(
+  [
+    `\\b(?:today|tonight|tomorrow|weekends?|this week|next week|this month|next month)\\b`,
+    `\\b(?:until|till|untill|expires?|expiring|expiry|ends? (?:on|at|by)|valid (?:from|till|until|through|on))\\b`,
+    `\\bonly on\\b`,
+    `\\bfor (?:the )?(?:next |first )?\\d+\\s*(?:hours?|hrs?|days?|weeks?|months?)\\b`,
+    `\\b(?:limited[- ]time|flash sale|happy hours?|midnight)\\b`,
+    `\\b(?:diwali|holi|christmas|xmas|new year|black friday|cyber monday|eid|pongal|onam|navratri|festive season|festival sale)\\b`,
+    `\\b${DAY}s?\\b`,
+    `\\b\\d{1,2}(?:st|nd|rd|th)?\\s+${MONTH}\\b`,
+    `\\b${MONTH}\\s+\\d{1,2}(?:st|nd|rd|th)?\\b`,
+    `\\b\\d{1,2}[/.-]\\d{1,2}[/.-]\\d{2,4}\\b`,
+    `\\b\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)\\b`,
+  ].join('|'),
+  'i'
+)
+
+/** The matched time phrase, or null. */
+export function timeLimitWording(text) {
+  const m = TIME_LIMIT_WORDING.exec(text)
+  return m ? m[0] : null
+}
+
+/**
+ * A minus sign or the word "minus"/"negative" right before an amount:
+ * "-50", "Rs.-50", "₹ -50", "minus 50". Ranges like "10-20%" don't match
+ * (the hyphen must not follow a digit or letter). Added after the parser
+ * evaluation, where "-50 rupees off" came back as a valid ₹50 discount.
+ */
+const NEGATIVE_AMOUNT =
+  /(?:^|[^\w.])(?:[-−–]\s*(?:rs\.?|inr|₹)?\s*\d[\d,]*(?:\.\d+)?|(?:rs\.?|inr|₹)\s*[-−–]\s*\d[\d,]*(?:\.\d+)?|\b(?:minus|negative)\s+(?:rs\.?\s*|inr\s*|₹\s*)?\d[\d,]*(?:\.\d+)?)/i
+
+/** The matched negative amount, or null. */
+export function negativeAmountWording(text) {
+  const m = NEGATIVE_AMOUNT.exec(text)
+  return m ? m[0].replace(/^[^\w\-−–₹]+/, '').trim() : null
+}
+
 /** "inclusive" | "strict" | null — what the user's own words say. */
 export function thresholdWording(text) {
   if (INCLUSIVE_WORDING.test(text)) return 'inclusive'
@@ -50,13 +95,26 @@ export function thresholdWording(text) {
 
 /**
  * Deterministic checks of a (possibly user-edited) draft against the original
- * text and the current state. Returns human-readable warnings; they never
- * change the rule — the user decides.
+ * text and the current state. They never change the rule.
+ *   warnings — shown for the user to check; confirming is still allowed
+ *   blockers — the rule can't be confirmed (e.g. the text asks for a negative discount)
  */
 export function crossCheck(draft, { text, existingRules = [], cartItems = [] }) {
   const warnings = []
+  const blockers = []
   const nums = numbersInText(text)
   const lowerText = text.toLowerCase()
+
+  const negative = negativeAmountWording(text)
+  if (negative) {
+    blockers.push(`Your text contains a negative amount ("${negative}"). A discount must be a positive amount, so this rule can't be added. Please rephrase it.`)
+  }
+  const timePhrase = timeLimitWording(text)
+  if (timePhrase) {
+    warnings.push(
+      `Your text mentions a time limit ("${timePhrase}"), but this engine has no dates or schedules. If you confirm, the rule will apply permanently until you remove it.`
+    )
+  }
 
   if (typeof draft.value === 'number' && !nums.includes(draft.value)) {
     warnings.push(`The discount value ${draft.value} doesn't appear in your text — please double-check it.`)
@@ -93,7 +151,7 @@ export function crossCheck(draft, { text, existingRules = [], cartItems = [] }) 
     warnings.push('Your text mentions combining offers, but the rule is marked non-stackable.')
   }
   const duplicate = existingRules.find((r) => isSameRule(r, { ...draft, minCartValue: draft.minCartValue ?? null }))
-  return { warnings, duplicateOf: duplicate?.ruleId ?? null }
+  return { warnings, blockers, duplicateOf: duplicate?.ruleId ?? null }
 }
 
 /**
@@ -146,6 +204,6 @@ export function adaptLlmResult(llm, ctx) {
 /** Validation + cross-checks for the current draft; re-run after every edit. */
 export function finalizeView(draft, ctx) {
   const validation = finalizeDraft(draft, ctx)
-  const { warnings, duplicateOf } = crossCheck(draft, ctx)
-  return { validation, warnings, duplicateOf }
+  const { warnings, blockers, duplicateOf } = crossCheck(draft, ctx)
+  return { validation, warnings, blockers, duplicateOf }
 }

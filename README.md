@@ -58,7 +58,7 @@ A customer sees one final price at checkout. Behind it, brands (₹150 off Natur
 ```
 api/parse-rule.js              Vercel serverless function (thin wrapper)
 server/parseRule.js            request validation, rate limit, re-validation of LLM output
-server/llm/                    provider (Anthropic), prompt, structured-output schema
+server/llm/                    providers (Groq, Anthropic), shared prompt, output schema, JSON-Schema checker
 src/adapters/                  csvAdapter, pdfAdapter, naturalLanguageAdapter
 src/services/                  pdfExtractor (pdf.js), aiRuleParser (fetch client)
 src/validation/                discountRuleSchema (Zod), cartItemSchema
@@ -72,7 +72,7 @@ The engine imports no CSV, PDF, LLM or validation library (enforced by `tests/ar
 
 ## Tech stack
 
-React 18 + Vite 8 · Papa Parse · pdf.js (`pdfjs-dist`, lazy-loaded) · Zod 4 · Anthropic SDK (server-side only) · Vitest 5 + React Testing Library · Vercel (static site + one serverless function). Requires Node 20.19+.
+React 18 + Vite 8 · Papa Parse · pdf.js (`pdfjs-dist`, lazy-loaded) · Zod 4 · LLM via Groq (OpenAI-compatible API, built-in fetch) or the Anthropic SDK, server-side only · Vitest 5 + React Testing Library · Vercel (static site + one serverless function). Requires Node 20.19+.
 
 ## Run locally
 
@@ -85,17 +85,35 @@ That's all you need for CSV, PDF and pricing. To enable the AI rule parser, also
 
 ## Environment variables
 
+All are server-side only. **Never** prefix them with `VITE_`, which would put them in the browser bundle.
+
 | Variable | Required | Purpose |
 |---|---|---|
-| `ANTHROPIC_API_KEY` | For AI rules | Server-side key for the rule parser. **Never** prefix it with `VITE_`. |
-| `LLM_MODEL` | No | Overrides the model (default `claude-opus-5-5`). |
+| `LLM_PROVIDER` | To use Groq | `groq` or `anthropic`. If unset, `anthropic` is used (the original default). The app never switches provider on its own because another key exists, and never falls back to a different provider when the selected one fails. |
+| `GROQ_API_KEY` | When `LLM_PROVIDER=groq` | Groq API key. An Anthropic key is not needed in this mode. |
+| `GROQ_MODEL` | No | Default `openai/gpt-oss-120b`. |
+| `ANTHROPIC_API_KEY` | When `LLM_PROVIDER=anthropic` | Anthropic API key. |
+| `ANTHROPIC_MODEL` | No | Default `claude-opus-5-5`. `LLM_MODEL` is still accepted as a legacy alias for this. |
+
+**Using Groq locally:**
+
+```
+# D:\assignment\.env   (git-ignored; never commit it)
+LLM_PROVIDER=groq
+GROQ_API_KEY=<your key from console.groq.com/keys>
+# GROQ_MODEL=openai/gpt-oss-120b
+```
+
+Then `npm run dev`. `npm run parse:once` shows the provider, model and whether the key is set, without calling the API; `npm run parse:once -- --yes` makes exactly one live call and prints the validated result.
+
+**Groq output modes.** For `openai/gpt-oss-120b` and `openai/gpt-oss-20b`, Groq's strict structured outputs (`response_format: json_schema, strict: true`) constrain the reply to the schema. Any other `GROQ_MODEL` uses JSON mode (`json_object`) with the schema in the prompt, which guarantees valid JSON but not the schema. In both modes the server's Zod check decides, and a mismatch is shown as an error, never repaired or guessed.
 
 Copy `.env.example` to `.env` locally. On Vercel, set them under *Project → Settings → Environment Variables*. Without a key, everything else works and the rule builder shows *"The AI rule parser is not configured on this server"*. The app never falls back to fake or regex parsing.
 
 ## Deploy (Vercel)
 
 1. Import the GitHub repo in Vercel (framework is auto-detected as Vite; `api/` becomes a serverless function).
-2. Add `ANTHROPIC_API_KEY`.
+2. Add `LLM_PROVIDER` and the matching key (`GROQ_API_KEY`, or `ANTHROPIC_API_KEY`), plus an optional model variable.
 3. Deploy, then put the URL at the top of this README.
 
 ## Using the sample inputs
@@ -106,6 +124,7 @@ Copy `.env.example` to `.env` locally. On Vercel, set them under *Project → Se
   - `sample-data/cart.pdf`: the brief's order (reproduces ₹5,339)
   - `sample-data/cart-malformed.pdf`: missing price/product/platform, unreadable and negative prices, a duplicate, a "Total" line
   - `sample-data/cart-near-threshold.pdf`: ₹3,817 cart, shows the "₹183 away" nudge
+  - `sample-data/cart-empty.pdf`: a valid PDF with one blank page (no text layer), shown as "may be a scanned image; OCR is not supported"
   - Regenerate with `npm run sample:pdfs`.
 - **AI rules:** click an example chip (the brief's four examples) or type your own.
 
@@ -126,9 +145,10 @@ Copy `.env.example` to `.env` locally. On Vercel, set them under *Project → Se
 ## Testing
 
 ```bash
-npm test                       # 100 tests, Vitest
+npm test                       # 171 tests, Vitest, fully offline
 npm run eval:parser -- --dry   # list the evaluation cases (no API calls)
-npm run eval:parser            # live LLM evaluation (needs ANTHROPIC_API_KEY, 25 API calls)
+npm run eval:parser            # live LLM evaluation (selected provider's key, 25 API calls)
+npm run parse:once -- --yes    # exactly one live parse (selected provider's key)
 ```
 
 | Suite | Covers |
@@ -138,17 +158,19 @@ npm run eval:parser            # live LLM evaluation (needs ANTHROPIC_API_KEY, 2
 | `explanation` | Customer sentences generated from results (ITEM-01 comparison, stacking, no-offer, cart label, nudge) |
 | `ruleImpact` | Impact preview and conflict notes (rule loses to / replaces an existing offer, cart threshold not met) |
 | `ai` | Server handler: missing key, empty/oversized input, malformed model output, provider failures. Domain validation: 200%, negative, NaN, missing target, threshold on item rule. Adapter: clarification, hallucinated values, strict-vs-inclusive wording, duplicates. Fetch client: network error, non-JSON |
-| `pdf` | Real pdf.js on the sample PDFs: brief cart → ₹5,339, every malformed row reported, not-a-PDF, scanned/empty, missing header, split headers, right-aligned prices |
+| `pdf` | Real pdf.js on the sample PDFs: brief cart → ₹5,339, every malformed row reported, not-a-PDF, blank-page PDF (`cart-empty.pdf`) reported as scanned/unsupported. Also: no header, header with no rows, split header words, right-aligned prices, a header repeated on page 2, password-protected PDFs, more than 20 pages (rejected before reading any page) |
 | `architecture` | Engine imports no parsing/LLM/validation libraries; a new adapter works without engine changes |
 | `intelligence` | Rule checks and cart insights on real engine output; "offers that don't apply" explanations; rounding at exactly ₹0.50; ₹10-lakh prices; paise; zero/negative/non-numeric prices; invalid CSV rows with row numbers; upload type/size limits |
-| `ui` (jsdom) | Rule added only on Confirm and only once on double-click; Discard adds nothing; an invalid edit disables Confirm; clarification shows no Confirm; API errors shown; sample cart → ₹5,339; cart kept when a PDF can't be read or has no valid rows; cart replaced only after confirmation |
+| `groq` | The JSON Schema sent to Groq passes a checker built from Groq's documented strict-mode rules (and the checker catches violations). Request shape: strict mode for gpt-oss, JSON mode otherwise. One POST with no retries. Malformed JSON, empty or cut-off replies, refusals, 401/403/404/400 (schema mismatch and other)/413/422/429 (with retry-after)/498/5xx, network failure and timeout. Zod still rejects bad output, 200% is still blocked, ambiguity stays a clarification. A failure never becomes another provider's answer or a made-up rule. Explicit provider selection and independent model settings |
+| `wordingChecks` | Replays the exact Groq output for the two evaluation misses: "this weekend only" now gets the time-limit warning, and "-50 rupees off" is now blocked. 10 time-limit and 6 negative-amount phrasings detected; ranges like "10-20%" ignored; neither check fires on any other evaluation instruction; the negative block holds even after the fields are edited |
+| `ui` (jsdom) | Rule added only on Confirm and only once on double-click; Discard adds nothing; an invalid edit disables Confirm; clarification shows no Confirm; API errors shown; a negative amount disables Confirm; a time limit warns but still allows Confirm; sample cart → ₹5,339. PDF: cart kept when the file can't be read, has no valid rows, is 0 bytes, or is a non-PDF dropped on the PDF area; Cancel keeps the cart; the duplicate checkbox controls what's imported; cart replaced only after confirmation |
 
-The AI service and pdf.js are mocked only in `ui.test.jsx`, at the module boundary. `pdf.test.js` runs the real pdf.js on the sample PDFs.
+All tests run offline. Groq HTTP responses are mocked in `groq.test.js` (global `fetch` is replaced so an accidental real call fails the test). The AI service and pdf.js are mocked in `ui.test.jsx` at the module boundary. `pdf.test.js` runs the real pdf.js on the sample PDFs.
 
 ## AI integration
 
 ```
-User text → POST /api/parse-rule → Claude (structured JSON output, Zod schema)
+User text → POST /api/parse-rule → selected provider: Groq or Claude (structured JSON output from one Zod schema)
           → server re-validates shape → client adapter: domain validation + cross-checks
           → confirmation (editable fields, warnings, impact preview from the engine)
           → user confirms → rule added → engine re-runs
@@ -159,16 +181,16 @@ User text → POST /api/parse-rule → Claude (structured JSON output, Zod schem
 - **Structured output.** The model must return `{status, interpretation, clarification, missing_fields, rule}` (`server/llm/ruleOutputSchema.js`). The server validates it again before returning it.
 - **Honest values.** The prompt tells the model to report numbers as stated ("200%" stays 200). The Zod domain schema then rejects it: *"200% is outside the supported range"*.
 - **No invented values.** Missing amounts or vague conditions ("big orders") return `needs_clarification` with a question; unsupported requests (BOGO, date ranges, products) return `unsupported`. Nothing is added.
-- **Deterministic cross-checks** (`naturalLanguageAdapter.crossCheck`) flag a value or threshold that doesn't appear in the user's text (possible hallucination), "more than" mapped to "at least" or vice versa, names the model normalized (e.g. "Amazon" → "Amazon India"), brands/platforms not present in the cart, stackability that contradicts the wording, and exact duplicates of active rules (blocked).
+- **Deterministic cross-checks** (`naturalLanguageAdapter.crossCheck`) flag a value or threshold that doesn't appear in the user's text (possible hallucination), "more than" mapped to "at least" or vice versa, names the model normalized (e.g. "Amazon" → "Amazon India"), brands/platforms not present in the cart, stackability that contradicts the wording, time limits the engine can't enforce (the rule would be permanent), negative amounts in the text (blocked), and exact duplicates of active rules (blocked).
 - **Confirmation.** Shows the original text, a deterministic description of the rule that will actually apply, the AI's own reading, editable fields (re-validated on every edit), and the impact on the current cart computed by the real engine, including conflict notes like *"Wall Shelf: the existing Amazon India offer saves ₹90, more than this rule's ₹50, so it stays applied."*
-- **Safety.** API key only on the server; 500-character input limit; best-effort per-IP rate limit; merchant text is wrapped and treated as data in the prompt; 30 s client timeout; typed SDK errors mapped to clear messages. If the model declines, the API's server-side fallback retries on another model.
-- **Provider.** `server/llm/anthropicProvider.js` implements `parseRule(text, context)`. Another provider only needs the same function wired into `createProvider()`.
+- **Safety.** API key only on the server; 500-character input limit; best-effort per-IP rate limit; merchant text is wrapped and treated as data in the prompt; 25 s server / 30 s client timeouts; provider errors mapped to clear messages that never include keys or raw provider responses. Groq makes exactly one HTTP request per parse with no automatic retries. With Anthropic, if the model declines, the API's server-side fallback retries on another Claude model.
+- **Providers.** `server/llm/groqProvider.js` and `server/llm/anthropicProvider.js` both implement `parseRule(text, context)` and share the prompt and output schema. `createProvider()` picks one from `LLM_PROVIDER`. Adding a provider means one module and one branch there; the engine, validation and UI don't change.
 
 ### Parser evaluation
 
 `evals/parser-cases.json` has **25 instructions**: 16 that should become rules, 4 that should trigger a clarification, 3 unsupported requests, and 2 invalid ones. They include the brief's four examples, strict vs inclusive thresholds ("more than", "above", "at least", "and above"), flat and percentage, stackable and non-stackable, an unconditional cart rule, short platform names ("Amazon" → "Amazon India"), a decimal percentage, 200%, a negative amount, a missing value or threshold, BOGO, a time-limited offer, a product-specific offer, and a prompt-injection attempt.
 
-**Method.** Each case runs through the real pipeline: server handler, then Claude, then server re-validation, then the client adapter and domain schema. A case passes only if the final outcome matches: the right rule with every expected field, a clarification, an `unsupported` reply, or a rejected invalid rule. The script reports:
+**Method.** Each case runs through the real pipeline: server handler, then the selected LLM provider, then server re-validation, then the client adapter and domain schema. A case passes only if the final outcome matches: the right rule with every expected field, a clarification, an `unsupported` reply, or a rejected invalid rule. The script reports:
 
 | Metric | Meaning |
 |---|---|
@@ -178,9 +200,35 @@ User text → POST /api/parse-rule → Claude (structured JSON output, Zod schem
 | Invalid rule rejected | Out-of-range cases that never became a rule |
 | Unsupported detected | BOGO / time-limited / product-specific requests declined |
 
-Full per-case results are written to `evals/results/latest.json`.
+Calls run one at a time, 3 s apart by default (`--delay=ms` to change), to reduce provider rate-limit errors. Full per-case results, including the raw model JSON, validation errors and any provider error, are written to `evals/results/latest.json`. Provider failures (`error:<code>`) are reported separately from rules the app rejected (`invalid`).
 
-**Results: not run yet.** The evaluation makes 25 billable API calls and no key was available during development. LLM parsing is probabilistic, so even a high score doesn't mean every input will parse correctly. That's why every parsed rule goes through validation, an engine-computed preview, and explicit confirmation.
+**Results: Groq `openai/gpt-oss-120b`, 24 Nov 2026.** One full run of 25 calls, 3 s apart. Six of those got HTTP 429 rate-limit responses (retry-after 1–6 s, consistent with Groq's tokens-per-minute limit), so those 6 were re-run once, 10 s apart (`--only=…`, saved in `evals/results/subset.json`). Every case was answered exactly once across the two runs; 31 calls in total.
+
+| | Result |
+|---|---|
+| Schema-valid answers | 25 / 25 |
+| **Expected outcome** | **22 / 25 (88%)** |
+| Correct interpretation (rules) | 15 / 16 |
+| Clarification asked when the amount or condition was missing | 4 / 4 |
+| Invalid rule rejected | 1 / 2 (200% ✓; negative amount ✗, see below) |
+| Unsupported request declined | 2 / 3 (BOGO ✓, product-specific ✓; time-limited ✗, see below) |
+| Prompt-injection attempt | Ignored; parsed the real rule (10% off Noon) |
+| Median latency | ~1 s |
+
+**The three misses**, all reproducible from the saved model output:
+
+| Input | Model returned | Caught in the app? |
+|---|---|---|
+| *"15% off on Amazon"* | platform **"Amazon"**, not "Amazon India" (the similar *"Give 15% off on Amazon products."* was mapped correctly) | **Warned.** With a cart loaded, the review screen warns no product is sold on platform "Amazon", and the rule checks suggest *Did you mean "Amazon India"?* |
+| *"20% off Natura Casa this weekend only"* | a **permanent** 20% Natura Casa rule; the time limit was dropped instead of being reported as unsupported | **Warned** (since this evaluation): *"Your text mentions a time limit ("weekend"), but this engine has no dates or schedules. If you confirm, the rule will apply permanently…"* |
+| *"-50 rupees off Natura Casa"* | a valid **₹50 off** rule; the minus sign was dropped, so the range check never saw a negative | **Blocked** (since this evaluation): *"Your text contains a negative amount ("-50")…"*, and Confirm is disabled. |
+
+**What changed because of this evaluation.** The last two misses were initially silent; the review screen relied on the merchant reading carefully. Two deterministic wording checks now close those gaps without depending on the model, in the same style as the existing strict-vs-inclusive check:
+
+- **Time-limit wording** (today, weekend, until/till, "for 3 days", festival names, weekdays, dates, times) shows a warning that the rule would apply permanently. It's a warning rather than a block, because the merchant may still want a permanent rule.
+- **Negative amounts** ("-50", "Rs.-50", "minus 30") block confirmation.
+
+Neither check fires on any of the other 23 evaluation instructions (enforced by `tests/wordingChecks.test.js`), and both are tested by replaying the exact model output Groq returned. Re-scoring the 25 saved answers offline with the new checks, the app now rejects the negative case, so **23 / 25 app-level outcomes match**. The model's own accuracy is unchanged at 22 / 25; the improvement is in the deterministic layer, not the LLM. This wasn't re-measured with new API calls. These are small, focused samples, so the numbers are indicative, not a guarantee.
 
 ## PDF limitations
 

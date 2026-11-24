@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { extractTextItems } from '../src/services/pdfExtractor.js'
@@ -71,5 +71,41 @@ describe('PDF table parsing edge cases', () => {
   it('splits a single wide-gapped text run into columns', () => {
     const r = parseCartFromTextItems([...header, t('Wall Shelf    LivSpace Pro    Amazon India    Rs.599', 50, 680)])
     expect(r.items[0]).toMatchObject({ product: 'Wall Shelf', brand: 'LivSpace Pro', platform: 'Amazon India', basePrice: 599 })
+  })
+})
+
+describe('PDF edge cases', () => {
+  const t = (str, x, y, page = 1) => ({ str, x, y, page })
+
+  it('a real PDF whose page has no text layer is reported as scanned/unsupported', async () => {
+    const r = await fromPdf('cart-empty.pdf')
+    expect(r.items).toEqual([])
+    expect(r.error).toContain('scanned image')
+    expect(r.error).toContain('OCR')
+  })
+
+  it('a header repeated on page 2 is skipped, and rows on both pages are kept', () => {
+    const header = (page) => [t('Product', 50, 700, page), t('Brand', 190, 700, page), t('Platform', 310, 700, page), t('Base Price', 430, 700, page)]
+    const r = parseCartFromTextItems([
+      ...header(1),
+      t('Wall Shelf', 50, 680), t('LivSpace Pro', 190, 680), t('Amazon India', 310, 680), t('Rs.599', 430, 680),
+      ...header(2),
+      t('Desk Organiser', 50, 680, 2), t('Nordic Basics', 190, 680, 2), t('Flipkart', 310, 680, 2), t('Rs.899', 430, 680, 2),
+    ])
+    expect(r.error).toBeNull()
+    expect(r.items.map((i) => i.product)).toEqual(['Wall Shelf', 'Desk Organiser'])
+    expect(r.rows).toHaveLength(2)
+  })
+
+  it('rejects password-protected PDFs with a clear message', async () => {
+    const pdfjs = { getDocument: () => ({ promise: Promise.reject(Object.assign(new Error('No password given'), { name: 'PasswordException' })) }) }
+    await expect(extractTextItems(pdfjs, new Uint8Array([1]))).rejects.toThrow('password-protected')
+  })
+
+  it('rejects PDFs over 20 pages before reading any page', async () => {
+    const getPage = vi.fn()
+    const pdfjs = { getDocument: () => ({ promise: Promise.resolve({ numPages: 21, getPage }) }) }
+    await expect(extractTextItems(pdfjs, new Uint8Array([1]))).rejects.toThrow('21 pages; carts are limited to 20 pages')
+    expect(getPage).not.toHaveBeenCalled()
   })
 })

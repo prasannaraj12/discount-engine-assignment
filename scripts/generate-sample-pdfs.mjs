@@ -1,12 +1,27 @@
-// Generates the sample cart PDFs in sample-data/ (run: npm run sample:pdfs).
+// Generates the sample cart PDFs in sample-data/.
+//   npm run sample:pdfs                       all files
+//   npm run sample:pdfs -- cart-empty.pdf     only the named file(s)
 // cart.pdf mirrors the assignment brief; cart-malformed.pdf exercises every
-// warning path; cart-near-threshold.pdf demonstrates the cart-offer nudge.
+// warning path; cart-near-threshold.pdf demonstrates the cart-offer nudge;
+// cart-empty.pdf is a valid PDF with one blank page (no text layer), which is
+// what a scanned/image-only PDF looks like to the extractor.
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import { writeFileSync } from 'node:fs'
 
 const COLS = [50, 190, 310, 430] // x positions: Product, Brand, Platform, Base Price
+const only = process.argv.slice(2)
+const want = (file) => only.length === 0 || only.includes(file)
+
+async function makeBlank(file) {
+  if (!want(file)) return
+  const doc = await PDFDocument.create()
+  doc.addPage([595, 842])
+  writeFileSync(new URL(`../sample-data/${file}`, import.meta.url), await doc.save())
+  console.log('wrote sample-data/' + file)
+}
 
 async function makeCart(file, title, rows, footer = []) {
+  if (!want(file)) return
   const doc = await PDFDocument.create()
   const page = doc.addPage([595, 842])
   const font = await doc.embedFont(StandardFonts.Helvetica)
@@ -58,3 +73,5 @@ await makeCart('cart-near-threshold.pdf', 'Order #OP-9940  |  Date: 20 Jan 2025'
   ['Wall Shelf', 'LivSpace Pro', 'Amazon India', 'Rs.599'],
   ['Desk Organiser', 'Nordic Basics', 'Flipkart', 'Rs.899'],
 ])
+
+await makeBlank('cart-empty.pdf')
