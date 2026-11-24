@@ -4,6 +4,8 @@ A customer-facing checkout pricing engine for the Opptra FDE Intern assignment. 
 
 **Live demo:** https://discount-engine-assignment-sable.vercel.app/ (deployed on Vercel from `main`; the AI rule parser uses Groq `openai/gpt-oss-120b`)
 
+**Video walkthrough:** https://www.loom.com/share/51e28da727f74f4d83854c299c0a2a80 (about 4 minutes)
+
 ---
 
 ## The problem
