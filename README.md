@@ -2,7 +2,7 @@
 
 A customer-facing checkout pricing engine for the Opptra FDE Intern assignment. It applies brand, platform and cart-level offers, explains every price in plain language, and accepts input from **CSV**, **PDF** and **natural-language rules parsed by an LLM**, all feeding the same deterministic engine.
 
-**Live demo:** _not deployed yet: add the Vercel URL here after deployment_
+**Live demo:** https://discount-engine-assignment-sable.vercel.app/ (deployed on Vercel from `main`; the AI rule parser uses Groq `openai/gpt-oss-120b`)
 
 ---
 
@@ -114,7 +114,7 @@ Copy `.env.example` to `.env` locally. On Vercel, set them under *Project → Se
 
 1. Import the GitHub repo in Vercel (framework is auto-detected as Vite; `api/` becomes a serverless function).
 2. Add `LLM_PROVIDER` and the matching key (`GROQ_API_KEY`, or `ANTHROPIC_API_KEY`), plus an optional model variable.
-3. Deploy, then put the URL at the top of this README.
+3. Deploy. The live deployment is at https://discount-engine-assignment-sable.vercel.app/.
 
 ## Using the sample inputs
 
