@@ -10,6 +10,14 @@ A customer-facing checkout pricing engine for the Opptra FDE Intern assignment. 
 
 A customer sees one final price at checkout. Behind it, brands (₹150 off Natura Casa) and platforms (15% off Amazon India) run overlapping campaigns. The system has to pick the best deal for each item, stack offers that are allowed to stack, apply cart-wide offers last, and tell the customer exactly what happened: one final price, one clear explanation, no surprises.
 
+## Why this is more than a discount calculator
+
+- **One deterministic source of truth.** Every rupee shown comes from `calculateCart()`. The LLM never calculates a price, picks a winning offer, or touches a total. It only proposes a rule, which the app validates before anyone confirms it.
+- **AI where language needs understanding, code where it doesn't.** Turning "10% off above ₹5,000" into a rule needs a language model. Spotting a duplicate promotion or the item with no offer doesn't, so those checks are plain, testable code.
+- **Transparent pricing.** Every product answers *what happened, why, how much did I save, and what can I do next*: the winning offer, the offer it beat and by how much, offers that don't cover it, the exact maths, and how far the cart is from the next cart offer.
+- **Mistakes are caught before they reach customers.** Rules are validated twice, previewed against the live cart with conflict notes, confirmed explicitly, and audited afterwards (deep discounts, duplicates, rules that can never win, heavy stacking, typos like "Amazon" vs "Amazon India").
+- **Bad input fails loudly and safely.** Malformed CSV and PDF rows are reported row by row, never guessed. A failed import never touches the current cart.
+
 ## Features
 
 | Area | What it does |
@@ -22,6 +30,9 @@ A customer sees one final price at checkout. Behind it, brands (₹150 off Natur
 | **Threshold nudge** | "You're just ₹183 away from unlocking 10% off your entire cart." with a progress bar |
 | **Change summary** | After adding or removing a rule: previous vs updated total, extra savings, and only the products whose price actually changed |
 | **Order summary** | Original total, product offers, cart offer, final payable, savings split by platform / brand / cart offers |
+| **Cart insights** | Overall saving, biggest saving, items with no offer, offers that were outbid, the cart offer's share, and the next threshold, all read from engine results. Suggestions only; never changes the cart. |
+| **Rule checks** | Deterministic audit of the active rules: ≥50% or 100% discounts, duplicates (stackable duplicates double-discount), same-target rules that can never win, rules matching nothing in the cart (with "did you mean…?"), rules outbid on every item, items ≥50% off after stacking |
+| **Safe uploads** | Type and size limits (CSV 1 MB, PDF 5 MB, 20 pages), checked for drag & drop too; a rejected file keeps the current data |
 
 ## Architecture
 
@@ -38,7 +49,8 @@ A customer sees one final price at checkout. Behind it, brands (₹150 off Natur
                            ├─ discountEngine.js      item-level (original logic)
                            └─ cartRuleEvaluator.js   cart-level, threshold nudge
                                                            │
-                         explanationEngine.js / ruleImpact.js (text + previews from results)
+             explanationEngine · ruleImpact · cartInsights · promotionAudit
+                   (text, previews, insights and checks read from results)
                                                            ▼
                                                   React components (display only)
 ```
@@ -50,16 +62,17 @@ server/llm/                    provider (Anthropic), prompt, structured-output s
 src/adapters/                  csvAdapter, pdfAdapter, naturalLanguageAdapter
 src/services/                  pdfExtractor (pdf.js), aiRuleParser (fetch client)
 src/validation/                discountRuleSchema (Zod), cartItemSchema
-src/engine/                    discountEngine, cartRuleEvaluator, pricing, explanationEngine, ruleImpact
+src/engine/                    discountEngine, cartRuleEvaluator, pricing, explanationEngine,
+                               ruleImpact, cartInsights, promotionAudit, ruleIdentity
 src/components/                UI only
 tests/                         Vitest suites
 ```
 
-The engine imports no CSV, PDF or LLM library (enforced by `tests/architecture.test.js`). The original `discountEngine.js` was kept. Changes there are additive (structured `steps` / `competingOffers` for explanations), plus one fix: a flat discount can no longer push a price below zero. **Adding a third input mode** means writing one function that returns `CartItem[]` or `DiscountRule[]` and passes it through `validateCartRow` / `validateDiscountRule`. The architecture test includes a JSON-order adapter written exactly that way.
+The engine imports no CSV, PDF, LLM or validation library (enforced by `tests/architecture.test.js`). The original `discountEngine.js` was kept. Changes there are additive (structured `steps` / `competingOffers` for explanations), plus one fix: a flat discount can no longer push a price below zero. **Adding a third input mode** means writing one function that returns `CartItem[]` or `DiscountRule[]` and passes it through `validateCartRow` / `validateDiscountRule`. The architecture test includes a JSON-order adapter written exactly that way.
 
 ## Tech stack
 
-React 18 + Vite 5 · Papa Parse · pdf.js (`pdfjs-dist`, lazy-loaded) · Zod · Anthropic SDK (server-side only) · Vitest · Vercel (static site + one serverless function)
+React 18 + Vite 8 · Papa Parse · pdf.js (`pdfjs-dist`, lazy-loaded) · Zod 4 · Anthropic SDK (server-side only) · Vitest 5 + React Testing Library · Vercel (static site + one serverless function). Requires Node 20.19+.
 
 ## Run locally
 
@@ -113,8 +126,9 @@ Copy `.env.example` to `.env` locally. On Vercel, set them under *Project → Se
 ## Testing
 
 ```bash
-npm test              # 74 tests, Vitest
-npm run eval:parser   # live LLM evaluation (needs ANTHROPIC_API_KEY, makes 20 API calls)
+npm test                       # 100 tests, Vitest
+npm run eval:parser -- --dry   # list the evaluation cases (no API calls)
+npm run eval:parser            # live LLM evaluation (needs ANTHROPIC_API_KEY, 25 API calls)
 ```
 
 | Suite | Covers |
@@ -125,7 +139,11 @@ npm run eval:parser   # live LLM evaluation (needs ANTHROPIC_API_KEY, makes 20 A
 | `ruleImpact` | Impact preview and conflict notes (rule loses to / replaces an existing offer, cart threshold not met) |
 | `ai` | Server handler: missing key, empty/oversized input, malformed model output, provider failures. Domain validation: 200%, negative, NaN, missing target, threshold on item rule. Adapter: clarification, hallucinated values, strict-vs-inclusive wording, duplicates. Fetch client: network error, non-JSON |
 | `pdf` | Real pdf.js on the sample PDFs: brief cart → ₹5,339, every malformed row reported, not-a-PDF, scanned/empty, missing header, split headers, right-aligned prices |
-| `architecture` | Engine imports no parsing/LLM libraries; a new adapter works without engine changes |
+| `architecture` | Engine imports no parsing/LLM/validation libraries; a new adapter works without engine changes |
+| `intelligence` | Rule checks and cart insights on real engine output; "offers that don't apply" explanations; rounding at exactly ₹0.50; ₹10-lakh prices; paise; zero/negative/non-numeric prices; invalid CSV rows with row numbers; upload type/size limits |
+| `ui` (jsdom) | Rule added only on Confirm and only once on double-click; Discard adds nothing; an invalid edit disables Confirm; clarification shows no Confirm; API errors shown; sample cart → ₹5,339; cart kept when a PDF can't be read or has no valid rows; cart replaced only after confirmation |
+
+The AI service and pdf.js are mocked only in `ui.test.jsx`, at the module boundary. `pdf.test.js` runs the real pdf.js on the sample PDFs.
 
 ## AI integration
 
@@ -148,9 +166,21 @@ User text → POST /api/parse-rule → Claude (structured JSON output, Zod schem
 
 ### Parser evaluation
 
-`evals/parser-cases.json` has 20 instructions: the brief's four examples, strict vs inclusive thresholds ("more than", "above", "at least", "and above"), flat and percentage, stackable and non-stackable, an unconditional cart rule, a short platform name, a decimal percentage, 200%, a negative amount, missing value, missing threshold, BOGO, a time-limited offer, and a prompt-injection attempt.
+`evals/parser-cases.json` has **25 instructions**: 16 that should become rules, 4 that should trigger a clarification, 3 unsupported requests, and 2 invalid ones. They include the brief's four examples, strict vs inclusive thresholds ("more than", "above", "at least", "and above"), flat and percentage, stackable and non-stackable, an unconditional cart rule, short platform names ("Amazon" → "Amazon India"), a decimal percentage, 200%, a negative amount, a missing value or threshold, BOGO, a time-limited offer, a product-specific offer, and a prompt-injection attempt.
 
-**Results: not run yet.** The evaluation needs an API key and spends real API credit, so it hasn't been run in this repo. Run `npm run eval:parser` and paste its summary (schema-valid rate and expected-outcome rate) here. LLM parsing is probabilistic; even a high score doesn't mean every input will parse correctly, which is why the confirmation step exists.
+**Method.** Each case runs through the real pipeline: server handler, then Claude, then server re-validation, then the client adapter and domain schema. A case passes only if the final outcome matches: the right rule with every expected field, a clarification, an `unsupported` reply, or a rejected invalid rule. The script reports:
+
+| Metric | Meaning |
+|---|---|
+| Parsed (schema-valid) | Model returned structured output that passed server validation |
+| Correct interpretation | Rule cases where every expected field matched |
+| Clarification asked | Vague cases where it asked instead of guessing |
+| Invalid rule rejected | Out-of-range cases that never became a rule |
+| Unsupported detected | BOGO / time-limited / product-specific requests declined |
+
+Full per-case results are written to `evals/results/latest.json`.
+
+**Results: not run yet.** The evaluation makes 25 billable API calls and no key was available during development. LLM parsing is probabilistic, so even a high score doesn't mean every input will parse correctly. That's why every parsed rule goes through validation, an engine-computed preview, and explicit confirmation.
 
 ## PDF limitations
 
@@ -159,7 +189,20 @@ User text → POST /api/parse-rule → Claude (structured JSON output, Zod schem
 - No quantity column: a repeated identical row is flagged as a possible duplicate and kept by default (a customer may buy two); the user can exclude duplicates.
 - Lines starting with Total / Subtotal / Tax / GST / Shipping after the header are ignored and listed.
 - Prices: `Rs.1,299`, `₹1,299.50`, `INR 899`, `1299`. Anything else is reported as unreadable, never guessed.
-- Max 20 pages; password-protected PDFs are rejected.
+- Max 5 MB and 20 pages; password-protected PDFs are rejected.
+
+## Error handling, edge cases and security
+
+| Concern | Handling |
+|---|---|
+| API key | Only read by the serverless function / dev middleware. Never `VITE_`-prefixed, never in the bundle. `.env` is git-ignored; `.env.example` has no value. |
+| LLM output | Structured output, then server re-validation, then the domain schema. Refusals, truncation, timeouts (25 s server / 30 s client), rate limits, auth and network errors each map to a clear message. No fake fallback. |
+| Prompt injection | Merchant text is wrapped in tags and treated as data; any rule it produces still goes through validation, preview and confirmation. |
+| Abuse of the AI endpoint | 500-character input cap, best-effort 20 req/min per IP. |
+| Uploads | Extension and size checked before reading (drag & drop included). pdf.js runs without `eval` (`isEvalSupported: false`). |
+| CSV / formula injection | Not applicable: the app never exports CSV. Values are rendered as React text, never as HTML. |
+| Failed imports | The current cart and rules are kept, and the message says so. |
+| Dependencies | `npm audit`: 0 vulnerabilities (Zod 4, Vite 8, Vitest 5). |
 
 ## Engineering decisions & trade-offs
 
@@ -179,12 +222,16 @@ User text → POST /api/parse-rule → Claude (structured JSON output, Zod schem
 | Scanned PDFs | Rejected with an explanation; OCR not implemented | OCR on prices is error-prone and would need a server; out of scope for 2–3 h |
 | PDF parsing location | Client-side (pdf.js, lazy-loaded) | No server needed; the file never leaves the browser |
 | API key security | Serverless function; key in env vars; never `VITE_`-prefixed | Client bundles are public |
+| Cart insights and rule checks | Deterministic code over engine results, not an LLM | The engine already knows every fact involved. An LLM would add cost, latency and the risk of a confidently wrong number in a money UI. |
+| UI tests | React Testing Library + jsdom, with AI and pdf.js mocked at the module boundary | Confirmation, cancellation and "cart kept on failed import" are UI behaviour; the engine and real pdf.js are tested separately |
 | Results refresh | First calculation via the button; after that, adding/removing a rule or confirming a PDF cart recalculates automatically. Uploading a new CSV clears results until recalculated | Preserves the original flow while meeting "engine re-runs" for Tasks 2 and 3 |
 
 ## Known limitations
 
 - Parser accuracy has not been measured yet (see above); results depend on the model.
 - The rate limiter is in-memory per serverless instance, so it's best-effort, not a security control.
+- Product- or category-specific offers aren't supported (the brief's data model has brand, platform and cart scopes only); the AI parser replies "unsupported" for them.
+- Rule checks use fixed thresholds (≥50% is "unusually deep"); a real deployment would make these configurable per merchant.
 - One rule per instruction; no rule editing after confirmation (remove and re-add instead).
 - No quantities, categories, date ranges or per-customer offers (the data model doesn't have them).
 - State is in memory only, by design (no database per the brief).

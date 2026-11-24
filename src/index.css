@@ -220,7 +220,7 @@ details.why[open] summary svg { transform: rotate(90deg); }
 .tech summary { font-size: 11.5px; color: var(--muted); cursor: pointer; }
 .tech ul { margin: 6px 0 0; padding-left: 16px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; color: var(--muted); }
 
-.summary-card { position: sticky; top: 76px; }
+.summary-card { align-self: start; }
 .sum-row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; font-size: 13.5px; }
 .sum-row .k { color: var(--muted); }
 .sum-row.discount .v { color: var(--success); }
@@ -271,3 +271,24 @@ details.why[open] summary svg { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation-duration: 0.01ms !important; }
 }
+
+/* ── Insights & rule checks ─────────────────────────── */
+.insights { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+.insights ul, .checks ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.insight { display: flex; gap: 8px; font-size: 12.5px; line-height: 1.45; color: var(--text); }
+.insight svg { flex: none; margin-top: 2px; color: var(--muted); }
+.insight-positive svg { color: var(--success); }
+.insight-action svg { color: var(--accent-ink); }
+.insight-note { margin-top: 10px; font-size: 11.5px; color: var(--faint); }
+.why-na { margin-top: 10px; }
+.why-na-title { font-size: 12px; color: var(--muted); font-weight: 600; }
+.why-na ul { margin: 4px 0 0; padding-left: 16px; color: var(--muted); }
+.checks { margin-top: 14px; }
+.checks-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.check { display: flex; gap: 8px; font-size: 12.5px; }
+.check svg { flex: none; margin-top: 2px; }
+.check-warning svg { color: var(--warn); }
+.check-info svg { color: var(--muted); }
+.check-title { font-weight: 600; color: var(--ink); }
+.check-detail { color: var(--muted); }
+.checks-ok { display: flex; gap: 6px; align-items: center; font-size: 12.5px; color: var(--success); }

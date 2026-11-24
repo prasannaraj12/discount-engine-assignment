@@ -9,7 +9,7 @@ describe('engine is independent of input methods', () => {
     for (const f of readdirSync(dir)) {
       const src = readFileSync(new URL(f, dir), 'utf8')
       expect(src, f).not.toMatch(/from ['"](papaparse|pdfjs-dist|@anthropic-ai\/sdk|zod)/)
-      expect(src, f).not.toMatch(/\.\.\/(adapters|services)\//)
+      expect(src, f).not.toMatch(/\.\.\/(adapters|services|validation)\//)
     }
   })
 

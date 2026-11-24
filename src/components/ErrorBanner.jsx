@@ -11,7 +11,7 @@ export default function ErrorBanner({ errors, title, variant = 'error' }) {
       <Icon name="alert" />
       <div>
         <div className="alert-title">
-          {title ?? `${errors.length} issue${errors.length > 1 ? 's' : ''} found — affected rows were not loaded`}
+          {title ?? `${errors.length} issue${errors.length > 1 ? 's' : ''} found`}
         </div>
         <ul>
           {errors.map((e, i) => (

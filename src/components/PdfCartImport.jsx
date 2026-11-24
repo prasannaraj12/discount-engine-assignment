@@ -66,7 +66,9 @@ export default function PdfCartImport({ onConfirm, currentCount, activeRuleCount
         description="Table with Product, Brand, Platform, Base Price"
         accept=".pdf,application/pdf"
         readAs="arrayBuffer"
+        maxBytes={5 * 1024 * 1024}
         onLoad={handleLoad}
+        onReject={(message, fileName) => setState({ status: 'error', fileName, message })}
         hasData={state.status === 'preview'}
         fileName={state.fileName}
         disabled={state.status === 'reading'}

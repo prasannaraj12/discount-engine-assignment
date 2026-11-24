@@ -14,6 +14,8 @@ import RuleBuilder from './components/RuleBuilder.jsx'
 import PdfCartImport from './components/PdfCartImport.jsx'
 import PricingResults from './components/PricingResults.jsx'
 import Icon from './components/Icon.jsx'
+import RuleChecks from './components/RuleChecks.jsx'
+import { auditPromotions } from './engine/promotionAudit.js'
 import { parseRulesCSV, parseCartCSV } from './adapters/csvAdapter.js'
 import { calculateCart, diffPricing } from './engine/pricing.js'
 import { formatINR } from './utils/money.js'
@@ -87,6 +89,8 @@ export default function App() {
     () => (calculated && cartItems.length > 0 ? calculateCart(cartItems, rules) : null),
     [calculated, cartItems, rules]
   )
+
+  const ruleFindings = useMemo(() => auditPromotions(rules, cartItems), [rules, cartItems])
 
   // ── Handlers ──
 
@@ -192,6 +196,7 @@ export default function App() {
                 label="rules.csv"
                 description="rule_id, scope, applies_to, type, value, stackable, min_cart_value"
                 onLoad={handleRulesLoad}
+                onReject={(msg) => setRulesErr([`${msg} Your current rules were kept.`])}
                 hasData={rulesFileName !== ''}
                 fileName={rulesFileName}
               />
@@ -204,6 +209,7 @@ export default function App() {
                     </span>
                   </div>
                   <DataTable columns={RULES_COLUMNS(handleRuleRemoved)} rows={rules} rowKey={(r) => r.ruleId} />
+                  <RuleChecks findings={ruleFindings} hasCart={cartItems.length > 0} />
                 </>
               )}
               <hr className="divider" />
@@ -235,6 +241,7 @@ export default function App() {
                     label="cart.csv"
                     description="item_id, product, brand, platform, base_price"
                     onLoad={handleCartLoad}
+                    onReject={(msg) => setCartErrors([`${msg} Your current cart was kept.`])}
                     hasData={cartFileName !== '' && cartFileName.toLowerCase().endsWith('.csv')}
                     fileName={cartFileName}
                   />
@@ -277,7 +284,7 @@ export default function App() {
         {/* Results */}
         {pricing && (
           <div className="section-gap">
-            <PricingResults pricing={pricing} lastChange={lastChange} onDismissChange={() => setLastChange(null)} />
+            <PricingResults pricing={pricing} rules={rules} lastChange={lastChange} onDismissChange={() => setLastChange(null)} />
           </div>
         )}
       </main>

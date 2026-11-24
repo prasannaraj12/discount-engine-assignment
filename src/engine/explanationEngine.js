@@ -45,9 +45,27 @@ const NO_OFFER_DETAIL = 'This product is currently not eligible for any active d
  *   lines: {text: string, amount: number|null}[],
  *   alternatives: string[], competing offers that lost and by how much
  *   technical: string[],    rule IDs and exact maths
+ *   notApplicable: string[], active item rules that don't cover this product, and why
  * }}
  */
-export function explainItem(result) {
+export function explainItem(result, activeRules = []) {
+  return { ...explainApplied(result), notApplicable: explainNotApplicable(result, activeRules) }
+}
+
+/** "Flipkart offer (10% off): this item is sold on Amazon India" */
+export function explainNotApplicable(result, activeRules) {
+  const norm = (s) => String(s ?? '').trim().toLowerCase()
+  return activeRules
+    .filter((r) => r.scope === 'brand' || r.scope === 'platform')
+    .filter((r) => (r.scope === 'brand' ? norm(r.appliesTo) !== norm(result.brand) : norm(r.appliesTo) !== norm(result.platform)))
+    .map((r) =>
+      r.scope === 'brand'
+        ? `${r.ruleId} · ${offerName(r)} (${offerValue(r)}): this product's brand is ${result.brand}`
+        : `${r.ruleId} · ${offerName(r)} (${offerValue(r)}): this product is sold on ${result.platform}`
+    )
+}
+
+function explainApplied(result) {
   if (result.steps.length === 0) {
     return {
       label: 'No offers available',

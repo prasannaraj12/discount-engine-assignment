@@ -6,9 +6,10 @@
 import Icon from './Icon.jsx'
 import { explainItem, explainCartOffer, explainNudge } from '../engine/explanationEngine.js'
 import { getThresholdNudge } from '../engine/cartRuleEvaluator.js'
+import { getCartInsights } from '../engine/cartInsights.js'
 import { formatINR, round2 } from '../utils/money.js'
 
-export default function PricingResults({ pricing, lastChange, onDismissChange }) {
+export default function PricingResults({ pricing, rules = [], lastChange, onDismissChange }) {
   const changedIds = new Set(lastChange?.diff.changedItems.map((c) => c.itemId) ?? [])
   return (
     <div>
@@ -25,7 +26,7 @@ export default function PricingResults({ pricing, lastChange, onDismissChange })
           </div>
           <ul className="line-items" style={{ marginTop: 12 }}>
             {pricing.items.map((r) => (
-              <LineItem key={r.itemId} result={r} changed={changedIds.has(r.itemId)} />
+              <LineItem key={r.itemId} result={r} rules={rules} changed={changedIds.has(r.itemId)} />
             ))}
           </ul>
         </div>
@@ -35,8 +36,8 @@ export default function PricingResults({ pricing, lastChange, onDismissChange })
   )
 }
 
-function LineItem({ result, changed }) {
-  const e = explainItem(result)
+function LineItem({ result, rules, changed }) {
+  const e = explainItem(result, rules)
   const hasOffer = result.steps.length > 0
   return (
     <li className={`line-item${changed ? ' li-changed' : ''}`}>
@@ -103,6 +104,16 @@ function LineItem({ result, changed }) {
                 <li key={a}>{a}</li>
               ))}
             </ul>
+          )}
+          {e.notApplicable.length > 0 && (
+            <div className="why-na">
+              <div className="why-na-title">Other active offers that don't cover this product</div>
+              <ul>
+                {e.notApplicable.map((t) => (
+                  <li key={t}>{t.split(' · ')[1]}</li>
+                ))}
+              </ul>
+            </div>
           )}
           <details className="tech">
             <summary>Technical details</summary>
@@ -178,6 +189,8 @@ function CartSummary({ pricing }) {
           <div className="sum-savings num">You save {formatINR(pricing.totalSavings)} on this order</div>
         )}
 
+        <Insights pricing={pricing} />
+
         {pricing.totalSavings > 0 && (
           <div className="breakdown">
             <div className="review-label">Savings by offer type</div>
@@ -247,6 +260,27 @@ function ChangeBanner({ change, onDismiss }) {
       <button type="button" className="link-btn" onClick={onDismiss}>
         Dismiss
       </button>
+    </div>
+  )
+}
+
+const TONE_ICON = { action: 'cart', positive: 'checkCircle', neutral: 'info' }
+
+function Insights({ pricing }) {
+  const insights = getCartInsights(pricing).filter((i) => i.kind !== 'threshold') // threshold already shown as the nudge
+  if (insights.length === 0) return null
+  return (
+    <div className="insights">
+      <div className="review-label">Insights</div>
+      <ul>
+        {insights.map((i) => (
+          <li key={i.text} className={`insight insight-${i.tone}`}>
+            <Icon name={TONE_ICON[i.tone]} size={14} />
+            <span>{i.text}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="insight-note">Calculated from your rules and cart. Suggestions only; nothing is changed automatically.</div>
     </div>
   )
 }
